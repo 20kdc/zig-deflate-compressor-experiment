@@ -86,12 +86,14 @@ pub fn DeflateCompressorWindow(comptime windowSize: usize) type {
         }
 
         fn ptrBack(self: *Self, ptr: usize) usize {
+            _ = self;
             if (ptr == 0)
                 return windowSize - 1;
             return ptr - 1;
         }
 
         fn ptrFwd(self: *Self, ptr: usize) usize {
+            _ = self;
             if (ptr == (windowSize - 1))
                 return 0;
             return ptr + 1;
