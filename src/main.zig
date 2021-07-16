@@ -33,28 +33,6 @@ const std = @import("std");
 //   Note that the last 2 symbols of the distance tree will never occur in the compressed data.
 //   (This implies they're padding.)
 
-// -- Bit Reversers --
-
-fn reverse4(nibble: u4) u4 {
-    return ((nibble & 0x8) >> 3) | ((nibble & 0x4) >> 1) | ((nibble & 0x2) << 1) | ((nibble & 0x1) << 3);
-}
-
-fn reverse8(byte: u8 ) u8 {
-    return (@intCast(u8, reverse4(@truncate(u4, byte & 0xF))) << 4) | @intCast(u8, reverse4(@truncate(u4, (byte & 0xF0) >> 4)));
-}
-
-fn reverse7(asc: u7) u7 {
-    return @truncate(u7, reverse8(@intCast(u8, asc)) >> 1);
-}
-
-fn reverse5(ml: u5) u5 {
-    return (@intCast(u5, reverse4(@truncate(u4, ml))) << 1) | (ml >> 4);
-}
-
-fn reverse9(ml: u9) u9 {
-    return (@intCast(u9, reverse8(@truncate(u8, ml))) << 1) | (ml >> 8);
-}
-
 // -- Window Management --
 
 const DeflateWindowFind = struct {
@@ -253,22 +231,22 @@ pub fn DeflateCompressor(comptime windowSize: usize, comptime WriterType: type) 
         fn writeFxhLiteralSymbol(self: *Self, sym: u9) BitWriterType.Error!void {
             if (sym < 144) {
                 //    Symbols 0, 143 inc. are 8-bit, base 48
-                try self.forward_writer.writeBits(reverse8(@truncate(u8, sym + 48)), 8);
+                try self.forward_writer.writeBits(@bitReverse(u8, @truncate(u8, sym + 48)), 8);
             } else if (sym < 256) {
                 //    Symbols 144, 255 inc. are 9-bit, base 400
-                try self.forward_writer.writeBits(reverse9(@truncate(u9, sym + 256)), 9);
+                try self.forward_writer.writeBits(@bitReverse(u9, @truncate(u9, sym + 256)), 9);
             } else if (sym < 280) {
                 //    Symbols 256, 279 inc. are 7-bit, base 0
-                try self.forward_writer.writeBits(reverse7(@truncate(u7, sym - 256)), 7);
+                try self.forward_writer.writeBits(@bitReverse(u7, @truncate(u7, sym - 256)), 7);
             } else {
                 //    Symbols 280, 287 inc. are 8-bit, base 192
-                try self.forward_writer.writeBits(reverse8(@truncate(u8, sym - 88)), 8);
+                try self.forward_writer.writeBits(@bitReverse(u8, @truncate(u8, sym - 88)), 8);
             }
         }
 
         // Internal: Write symbol, fixed-huffman-table: distance
         fn writeFxhDistanceSymbol(self: *Self, sym: u5) BitWriterType.Error!void {
-            try self.forward_writer.writeBits(reverse5(sym), 5);
+            try self.forward_writer.writeBits(@bitReverse(u5, sym), 5);
         }
 
         // This opens a fixed-huffman chunk.
