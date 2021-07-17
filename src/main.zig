@@ -5,6 +5,8 @@
 
 const std = @import("std");
 
+const window = @import("./window.zig");
+
 // So before we continue, some specific notes about the format.
 // + The world in which DEFLATE operates in is a bitstream.
 //   The lowest bit of each byte is the first bit in the stream, going forwards.
@@ -32,134 +34,6 @@ const std = @import("std");
 //   HOWEVER, the bits are reversed as per the difference between Huffman and non-Huffman integers above.
 //   Note that the last 2 symbols of the distance tree will never occur in the compressed data.
 //   (This implies they're padding.)
-
-// -- Window Management --
-
-const DeflateWindowFind = struct {
-    distance: u16,
-    // NOTE: Maximum length is 258.
-    length: u16
-};
-
-pub fn DeflateCompressorWindow(comptime windowSize: usize) type {
-    // Past this window size, unrepresentable distances may occur,
-    //  integer overflows may occur...
-    // Larger than this is also not supported decoding-wise
-    std.debug.assert(windowSize <= 0x8000);
-    return struct {
-        // Window ring
-        data: [windowSize]u8,
-        // Amount of the ring which is valid
-        valid: usize,
-        // Write position in the ring
-        ptr: usize,
-
-        const Self = @This();
-        pub fn init() Self {
-            return Self {
-                .data = undefined,
-                .valid = 0,
-                .ptr = 0,
-            };
-        }
-
-        fn ptrBack(self: *Self, ptr: usize) usize {
-            _ = self;
-            if (ptr == 0)
-                return windowSize - 1;
-            return ptr - 1;
-        }
-
-        fn ptrFwd(self: *Self, ptr: usize) usize {
-            _ = self;
-            if (ptr == (windowSize - 1))
-                return 0;
-            return ptr + 1;
-        }
-
-        // Finds as much as it can of the given data slice within the window.
-        // Note that it may return a length of 0 - this means you must use a literal.
-        // Note that it will NOT return a length above the length of the input data.
-        // Nor will it return a length above 258 (the maximum length).
-        // Note that it may return 'extended' (off the end of the window) finds, this is normal and allowed in DEFLATE.
-        pub fn find(self: *Self, dataC: []const u8) DeflateWindowFind {
-            var bestDistance: u16 = 0;
-            var bestLength: u16 = 0;
-            if (dataC.len != 0) {
-                // Truncate slice to ensure that length cannot exceed maximum
-                const data = if (dataC.len < 258) dataC else dataC[0..258];
-                // Honestly shouldn't be possible that length is zero, but just in case.
-                var ptr = self.ptrBack(self.ptr);
-                // Note that distance can only ever get up to 0x8000
-                var distance: u16 = 1;
-                while (distance < self.valid) {
-                    var subPtr = ptr;
-                    var subDataAdv: u16 = 0;
-                    var subLength: u16 = 0;
-                    // Move forward until end
-                    while (subLength < data.len) {
-                        var gob: u8 = undefined;
-                        if (subPtr == self.ptr) {
-                            // ran out of window, start from start of written data
-                            // it can be assumed we will run out of outer-loop input before we run out of inner-loop input
-                            gob = data[subDataAdv];
-                            subDataAdv += 1;
-                        } else {
-                            // inside window
-                            gob = self.data[subPtr];
-                            subPtr = self.ptrFwd(subPtr);
-                        }
-                        if (gob != data[subLength])
-                            break;
-                        // success, increase length
-                        subLength += 1;
-                    }
-                    // Check length
-                    if (subLength > bestLength) {
-                        bestDistance = distance;
-                        bestLength = subLength;
-                    }
-                    // Continue backwards
-                    ptr = self.ptrBack(ptr);
-                    distance += 1;
-                }
-            }
-            return DeflateWindowFind {
-                .distance = bestDistance,
-                .length = bestLength,
-            };
-        }
-
-        // Injects a byte into the window.
-        // This covers situations where some known activity was performed on the DEFLATE stream.
-        pub fn injectByte(self: *Self, data: u8) void {
-            self.data[self.ptr] = data;
-            self.ptr = self.ptrFwd(self.ptr);
-            if (self.valid < windowSize)
-                self.valid += 1;
-        }
-
-        // Injects a slice into the window.
-        // This covers situations where some known activity was performed on the DEFLATE stream.
-        pub fn inject(self: *Self, data: []const u8) void {
-            // Mostly naive method for now, with some slight adjustments
-            if (data.len > windowSize) {
-                self.inject(data[(data.len - windowSize)..data.len]);
-                return;
-            }
-            for (data) |b| {
-                self.injectByte(b);
-            }
-        }
-
-        // Resets window validity.
-        // This covers situations where some unknown activity was performed on the DEFLATE stream.
-        pub fn reset(self: *Self) void {
-            self.valid = 0;
-            self.ptr = 0;
-        }
-    };
-}
 
 // -- Main Body --
 
@@ -211,9 +85,9 @@ fn chooseBitBase(val: u16, comptime bitbase: type) usize {
     std.debug.panic("failed to find {}", .{ val });
 }
 
-pub fn DeflateCompressor(comptime windowSize: usize, comptime WriterType: type) type {
+pub fn DeflateCompressor(comptime WindowType: type, comptime WriterType: type) type {
     return struct {
-        const Window = DeflateCompressorWindow(windowSize);
+        const Window = WindowType;
         forward_writer: BitWriterType,
         window: Window,
         const BitWriterType = std.io.BitWriter(std.builtin.Endian.Little, WriterType);
@@ -413,7 +287,7 @@ pub fn main() anyerror!void {
     const data = try std.fs.cwd().readFileAlloc(&alloc.allocator, "plscompressme.tar", 0x1000000);
     defer alloc.deinit();
     // --
-    const dcType = DeflateCompressor(0x8000, std.fs.File.Writer);
+    const dcType = DeflateCompressor(window.MemoryOptimizedWindow(0x8000), std.fs.File.Writer);
     var dc = dcType.init(std.io.getStdOut().writer());
     // zlib header
     try dc.forward_writer.writeBits(@as(u16, 0x0178), 16);
