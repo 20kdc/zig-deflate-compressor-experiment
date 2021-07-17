@@ -282,6 +282,9 @@ pub fn DeflateCompressor(comptime WindowType: type, comptime WriterType: type) t
 // -- Testbed --
 
 pub fn main() anyerror!void {
+    // confirms this compiles (ought to be tests really)
+    var mt = window.MemoryOptimizedWindow(0x8000).init();
+    mt.injectByte(2);
     // would prefer not to allocate, but kinda have to for this bit the way it's setup
     var alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const data = try std.fs.cwd().readFileAlloc(&alloc.allocator, "plscompressme.tar", 0x1000000);

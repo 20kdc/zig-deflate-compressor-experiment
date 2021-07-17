@@ -5,15 +5,20 @@
 
 const std = @import("std");
 
-// -- Window Management --
-
 pub const WindowFind = struct {
     distance: u16,
     // NOTE: Maximum length is 258.
     length: u16
 };
 
-pub fn MemoryOptimizedWindow(comptime windowSize: usize) type {
+pub fn windowInjectByteDefault(self: anytype, byte: u8) void {
+    var tmp = [_]u8{ byte };
+    self.inject(tmp[0..1]);
+}
+
+// -- Implementations --
+
+pub fn MemoryOptimizedWindow(comptime windowSize: u16) type {
     // Past this window size, unrepresentable distances may occur,
     //  integer overflows may occur...
     // Larger than this is also not supported decoding-wise
@@ -22,9 +27,9 @@ pub fn MemoryOptimizedWindow(comptime windowSize: usize) type {
         // Window ring
         data: [windowSize]u8,
         // Amount of the ring which is valid
-        valid: usize,
+        valid: u16,
         // Write position in the ring
-        ptr: usize,
+        ptr: u16,
 
         const Self = @This();
         pub fn init() Self {
@@ -35,14 +40,14 @@ pub fn MemoryOptimizedWindow(comptime windowSize: usize) type {
             };
         }
 
-        fn ptrBack(self: *Self, ptr: usize) usize {
+        fn ptrBack(self: *Self, ptr: u16) u16 {
             _ = self;
             if (ptr == 0)
                 return windowSize - 1;
             return ptr - 1;
         }
 
-        fn ptrFwd(self: *Self, ptr: usize) usize {
+        fn ptrFwd(self: *Self, ptr: u16) u16 {
             _ = self;
             if (ptr == (windowSize - 1))
                 return 0;
@@ -104,12 +109,7 @@ pub fn MemoryOptimizedWindow(comptime windowSize: usize) type {
 
         // Injects a byte into the window.
         // This covers situations where some known activity was performed on the DEFLATE stream.
-        pub fn injectByte(self: *Self, data: u8) void {
-            self.data[self.ptr] = data;
-            self.ptr = self.ptrFwd(self.ptr);
-            if (self.valid < windowSize)
-                self.valid += 1;
-        }
+        pub const injectByte = windowInjectByteDefault;
 
         // Injects a slice into the window.
         // This covers situations where some known activity was performed on the DEFLATE stream.
@@ -120,7 +120,14 @@ pub fn MemoryOptimizedWindow(comptime windowSize: usize) type {
                 return;
             }
             for (data) |b| {
-                self.injectByte(b);
+                self.data[self.ptr] = b;
+                self.ptr = self.ptrFwd(self.ptr);
+            }
+            if ((windowSize - self.valid) < data.len) {
+                self.valid = windowSize;
+            } else {
+                // It's important to note that the data.len vs. windowSize check above prevents this from triggering UB.
+                self.valid += @intCast(u16, data.len);
             }
         }
 
